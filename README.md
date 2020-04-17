@@ -1,32 +1,17 @@
-# IRM games
+# Invariant Risk Minimization games
 
-This library includes three files. 
+Fork of the IRM-games repository:
 
-1. IRM_games_jmtd_illstration_notebook.ipynb: Jupyter notebook serves as the tutorial. In this tutorial, we compare the IRM games methods, IRM from Arjovsky et.al. and standard ERM. 
+```
+https://github.com/IBM/IRM-games.git
+```
 
+## Installation
 
-2. data_construct.py: we define two classes in this file; one class corresponds to colored MNIST digits and other class corresponds to colored Fashion MNIST. These classes give the functionality of how much correlation we want to induce with the colors, how many environments we want. (See the tutorial notebook for details)
+Create the right conda environment.
 
-
-3. IRM_methods.py: consists of four classes. 
-
-
-    a. fixed_irm_game_model
-    
-    b. variable_irm_game_model
-    
-    c. irm_model
-    
-    d. standard_erm_model
-
-    Each of these classes have attributes similar to any sklearn class. Initialization requires us to specify the hyper-parameters for the class. fit function is called for training and evaluate function is used for evaluation. (See tutorial notebook for details).
-
-### Installation
-
-Clone the latest version of this repository:
-
-```bash
-$ git clone https://github.com/IBM/IRM-games.git
+```
+conda create --name irmgames --file spec-file.txt
 ```
 
 ## Suggested Citation
