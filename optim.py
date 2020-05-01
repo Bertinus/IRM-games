@@ -1,98 +1,42 @@
-#  MIT License
-
-# Copyright (c) Facebook, Inc. and its affiliates.
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-# written by Hugo Berard (berard.hugo@gmail.com) while at Facebook.
-
+from torch.optim import optimizer as torch_optim
+from torch.optim.adam import Adam as TorchAdam
+from torch.optim.sgd import SGD as TorchSGD
+from tensorflow.keras import optimizers as keras_optim
 import math
 import torch
-from torch.optim.optimizer import Optimizer
-from torch.optim.sgd import SGD
-from torch.optim.adam import Adam
 
 required = object()
 
 
+class ExtraGradient(torch_optim.Optimizer):
+    """
+    Base class for optimizers with extrapolation step.
 
-def create_optimizers(module_name, n_env, optimizer_name, learning_rate, beta_1):
-    assert optimizer_name in ["Adam", "SGD"]
-    optimizers = []
-
-    if module_name == "keras":
-        for _ in range(n_env):
-            if beta_1 is None:
-                optimizers.append(getattr(keras.optimizers, optimizer_name)(learning_rate=learning_rate))
-            else:
-                optimizers.append(getattr(keras.optimizers, optimizer_name)(learning_rate=learning_rate,
-                                                                            beta_1=beta_1))
-
-    elif module_name == "pytorch":
-        for _ in range(n_env):
-            if beta_1 is None:
-                optimizers.append(getattr(optim, optimizer_name)(lr=learning_rate))
-            else:
-                optimizers.append(getattr(optim, optimizer_name)(lr=learning_rate,
-                                                                 betas=(beta_1, 0.999)))
-
-    else:
-        raise Exception('Module must be "keras" or "pytorch".')
-
-    return optimizers
-
-
-
-
-class SGD(SGD):
-    pass
-
-
-class Adam(Adam):
-    pass
-
-
-class Extragradient(Optimizer):
-    """Base class for optimizers with extrapolation step.
-        Arguments:
+    Args:
         params (iterable): an iterable of :class:`torch.Tensor` s or
             :class:`dict` s. Specifies what Tensors should be optimized.
         defaults: (dict): a dict containing default values of optimization
             options (used when a parameter group doesn't specify them).
     """
+
     def __init__(self, params, defaults):
-        super(Extragradient, self).__init__(params, defaults)
+        super().__init__(params, defaults)
         self.params_copy = []
 
     def update(self, p, group):
         raise NotImplementedError
 
     def extrapolation(self):
-        """Performs the extrapolation step and save a copy of the current parameters for the update step.
-        """
+        """ Performs the extrapolation step and save a copy of the current parameters for the update step. """
+
         # Check if a copy of the parameters was already made.
         is_empty = len(self.params_copy) == 0
         for group in self.param_groups:
             for p in group['params']:
                 u = self.update(p, group)
                 if is_empty:
-                    # Save the current parameters for the update step. Several extrapolation step can be made before each update but only the parameters before the first extrapolation step are saved.
+                    # Save the current parameters for the update step. Several extrapolation step can be made before
+                    # each update but only the parameters before the first extrapolation step are saved.
                     self.params_copy.append(p.data.clone())
                 if u is None:
                     continue
@@ -100,11 +44,14 @@ class Extragradient(Optimizer):
                 p.data.add_(u)
 
     def step(self, closure=None):
-        """Performs a single optimization step.
-        Arguments:
+        """
+        Performs a single optimization step.
+
+        Args:
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
+
         if len(self.params_copy) == 0:
             raise RuntimeError('Need to call extrapolation before calling step.')
 
@@ -122,16 +69,17 @@ class Extragradient(Optimizer):
                 # Update the parameters saved during the extrapolation step
                 p.data = self.params_copy[i].add_(u)
 
-
         # Free the old parameters
         self.params_copy = []
         return loss
 
 
-class ExtraSGD(Extragradient):
-    """Implements stochastic gradient descent with extrapolation step (optionally with momentum).
+class ExtraSGD(ExtraGradient):
+    """
+    Implements stochastic gradient descent with extrapolation step (optionally with momentum).
     Nesterov momentum is based on the formula from
     `On the importance of initialization and momentum in deep learning`__.
+
     Args:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
@@ -165,8 +113,8 @@ class ExtraSGD(Extragradient):
              p = p - v
         The Nesterov version is analogously modified.
     """
-    def __init__(self, params, lr=required, momentum=0, dampening=0,
-                 weight_decay=0, nesterov=False):
+
+    def __init__(self, params, lr=required, momentum=0, dampening=0, weight_decay=0, nesterov=False):
         if lr is not required and lr < 0.0:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if momentum < 0.0:
@@ -174,14 +122,15 @@ class ExtraSGD(Extragradient):
         if weight_decay < 0.0:
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
 
-        defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
-                        weight_decay=weight_decay, nesterov=nesterov)
+        defaults = dict(lr=lr, momentum=momentum, dampening=dampening, weight_decay=weight_decay, nesterov=nesterov)
+
         if nesterov and (momentum <= 0 or dampening != 0):
             raise ValueError("Nesterov momentum requires a momentum and zero dampening")
-        super(ExtraSGD, self).__init__(params, defaults)
+
+        super().__init__(params, defaults)
 
     def __setstate__(self, state):
-        super(SGD, self).__setstate__(state)
+        super().__setstate__(state)
         for group in self.param_groups:
             group.setdefault('nesterov', False)
 
@@ -212,9 +161,11 @@ class ExtraSGD(Extragradient):
         return -group['lr']*d_p
 
 
-class ExtraAdam(Extragradient):
-    """Implements the Adam algorithm with extrapolation step.
-    Arguments:
+class ExtraAdam(ExtraGradient):
+    """
+    Implements the Adam algorithm with extrapolation step.
+
+    Args:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
         lr (float, optional): learning rate (default: 1e-3)
@@ -227,22 +178,21 @@ class ExtraAdam(Extragradient):
             algorithm from the paper `On the Convergence of Adam and Beyond`_
     """
 
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=0, amsgrad=False):
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, amsgrad=False):
         if not 0.0 <= lr:
-         raise ValueError("Invalid learning rate: {}".format(lr))
+            raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
-         raise ValueError("Invalid epsilon value: {}".format(eps))
+            raise ValueError("Invalid epsilon value: {}".format(eps))
         if not 0.0 <= betas[0] < 1.0:
-         raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
+            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
         if not 0.0 <= betas[1] < 1.0:
-         raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
-        defaults = dict(lr=lr, betas=betas, eps=eps,
-                     weight_decay=weight_decay, amsgrad=amsgrad)
-        super(ExtraAdam, self).__init__(params, defaults)
+            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
+
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
+        super().__init__(params, defaults)
 
     def __setstate__(self, state):
-        super(ExtraAdam, self).__setstate__(state)
+        super().__setstate__(state)
         for group in self.param_groups:
             group.setdefault('amsgrad', False)
 
@@ -293,3 +243,36 @@ class ExtraAdam(Extragradient):
         step_size = group['lr'] * math.sqrt(bias_correction2) / bias_correction1
 
         return -step_size*exp_avg/denom
+
+
+def create_optimizers(module_name, optimizer_name, n_env, learning_rate, beta_1=None, params=None):
+    assert module_name in ["keras", "pytorch"]
+    assert optimizer_name in ["Adam", "SGD", "ExtraAdam", "ExtraSGD"]
+
+    if module_name == "keras":
+        if optimizer_name == "Adam":
+            assert beta_1 is not None
+            return [keras_optim.Adam(learning_rate=learning_rate, beta_1=beta_1) for _ in range(n_env)]
+
+        elif optimizer_name == "SGD":
+            return [keras_optim.SGD(learning_rate=learning_rate) for _ in range(n_env)]
+
+        else:
+            raise NotImplementedError
+
+    else:
+        assert params is not None
+
+        if optimizer_name == "Adam":
+            assert beta_1 is not None
+            return [TorchAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999)) for i_env in range(n_env)]
+
+        elif optimizer_name == "SGD":
+            return [TorchSGD(params=params[i_env], lr=learning_rate) for i_env in range(n_env)]
+
+        elif optimizer_name == "ExtraAdam":
+            assert beta_1 is not None
+            return [ExtraAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999)) for i_env in range(n_env)]
+
+        else:
+            return [ExtraSGD(params=params[i_env], lr=learning_rate) for i_env in range(n_env)]
