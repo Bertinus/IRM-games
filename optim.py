@@ -246,10 +246,10 @@ class ExtraAdam(ExtraGradient):
 
 
 def create_optimizers(module_name, optimizer_name, n_env, learning_rate, beta_1=None, params=None):
-    assert module_name in ["keras", "pytorch"]
+    assert module_name in ["tensorflow", "pytorch"]
     assert optimizer_name in ["Adam", "SGD", "ExtraAdam", "ExtraSGD"]
 
-    if module_name == "keras":
+    if module_name == "tensorflow":
         if optimizer_name == "Adam":
             assert beta_1 is not None
             return [keras_optim.Adam(learning_rate=learning_rate, beta_1=beta_1) for _ in range(n_env)]
