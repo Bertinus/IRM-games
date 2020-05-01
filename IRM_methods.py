@@ -1,24 +1,14 @@
 import tensorflow as tf
+import torch
 import numpy as np
-import argparse
-import IPython.display as display
-import matplotlib.pyplot as plt
-from tensorflow import keras
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.utils import shuffle
-import pandas as pd
-import tensorflow as tf
+from tqdm import tqdm_notebook as tqdm
 
 tf.compat.v1.enable_eager_execution()
-# import cProfile
-import copy as cp
-from sklearn.model_selection import KFold
 
 
 class fixed_irm_game_model:
-    def __init__(self, model_list, learning_rate, num_epochs, batch_size, termination_acc, warm_start):
-
+    def __init__(self, model_list, learning_rate, num_epochs, batch_size, termination_acc, warm_start, beta_1=0.9):
         self.model_list = model_list  # list of models for all the environments
         self.num_epochs = num_epochs  # number of epochs
         self.batch_size = batch_size  # batch size for each gradient update
@@ -26,6 +16,7 @@ class fixed_irm_game_model:
         self.warm_start = warm_start  # minimum number of steps we have to train before terminating due to accuracy
         # falling below threshold
         self.learning_rate = learning_rate  # learning rate in adam
+        self.beta_1 = beta_1
 
     def fit(self, data_tuple_list):
         n_e = len(data_tuple_list)  # number of environments
@@ -65,17 +56,17 @@ class fixed_irm_game_model:
 
         model_list = self.model_list
         learning_rate = self.learning_rate
+        beta_1 = self.beta_1
 
         # initialize optimizer for all the environments and representation learner and store it in a list
         optimizer_list = []
         for e in range(n_e):
-            optimizer_list.append(tf.keras.optimizers.Adam(learning_rate=learning_rate))
+            optimizer_list.append(tf.keras.optimizers.Adam(learning_rate=learning_rate, beta_1=beta_1))
 
         ####### train
-
         train_accuracy_results_0 = []  # list to store training accuracy
 
-        flag = 'false'
+        flag = False
         num_epochs = self.num_epochs
         batch_size = self.batch_size
         num_examples = data_tuple_list[0][0].shape[0]
@@ -91,7 +82,7 @@ class fixed_irm_game_model:
                 y_e = data_tuple_list[e][1]
                 datat_list.append(shuffle(x_e, y_e))
             count = 0
-            for offset in range(0, num_examples, batch_size):
+            for offset in tqdm(range(0, num_examples, batch_size)):
                 end = offset + batch_size
                 batch_x_list = []  # list to store batches for each environment
                 batch_y_list = []  # list to store batches of labels for each environment
@@ -114,17 +105,19 @@ class fixed_irm_game_model:
                 acc_train = np.float(epoch_accuracy(y_in, y_))
                 train_accuracy_results_0.append(acc_train)
 
-                if (
-                        steps >= warm_start and acc_train < termination_acc):  ## Terminate after warm start and train
+                if steps >= warm_start and acc_train < termination_acc:  ## Terminate after warm start and train
                     # acc touches threshold we dont want it to fall below
-                    flag = 'true'
+                    flag = True
+                    print("Early termination.")
                     break
 
                 count = count + 1
                 steps = steps + 1
                 self.train_accuracy_results = train_accuracy_results_0
-            if (flag == 'true'):
+
+            if flag:
                 break
+
         self.model_list = model_list
 
         self.x_in = x_in
@@ -155,6 +148,200 @@ class fixed_irm_game_model:
 
         self.train_acc = train_acc
         self.test_acc = test_acc
+
+
+class AbstractIrmGame:
+    """ Abstract class for IRM games. """
+
+    def __init__(self, models, optimizers, n_epochs, batch_size, termination_acc, warm_start):
+        self.models = models  # List of models for all the environments
+        self.optimizers = optimizers  # List of optimizers for all the environments
+
+        self.n_env = len(models)  # Number of environments
+        self.n_epochs = n_epochs  # Number of epochs
+        self.batch_size = batch_size  # Batch size for each gradient update
+        self.termination_acc = termination_acc  # Threshold on accuracy below which we terminating
+        self.warm_start = warm_start  # minimum number of steps we have to train before terminating
+
+        self.keras_criterion = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self.torch_criterion = torch.nn.CrossEntropyLoss()
+
+        self.grads = []
+        self.train_accs = []
+        self.test_acc = None
+
+    @staticmethod
+    def to_array(data):
+        raise NotImplementedError
+
+    @staticmethod
+    def to_tensor(data):
+        raise NotImplementedError
+
+    @staticmethod
+    def zeros(shape):
+        raise NotImplementedError
+
+    def loss(self, x, y, i_env):
+        raise NotImplementedError
+
+    def init_optimizer(self):
+        raise NotImplementedError
+
+    def update_optimizer(self, i_env):
+        raise NotImplementedError
+
+    def predict(self, x, shape, as_array=True):
+        x = self.to_tensor(x)
+        y_ = self.zeros(shape)
+
+        for i_env in range(self.n_env):
+            y_ = y_ + (1./self.n_env) * self.models[i_env](x)
+
+        if as_array:
+            return self.to_array(y_)
+        else:
+            return y_
+
+    def evaluate(self, x, y):
+        accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
+        y_ = self.predict(x=x, shape=(y.shape[0], 2))
+
+        return np.float(accuracy(y, y_))
+
+    def concatenate_train_data(self, data_tuple):
+        x = data_tuple[0][0]  # Combined data from environments
+        for i in range(1, self.n_env):
+            x_c = data_tuple[i][0]
+            x = np.concatenate((x, x_c), axis=0)
+
+        y = data_tuple[0][1]  # Combined labels from environments
+        for i in range(1, self.n_env):
+            y_c = data_tuple[i][1]
+            y = np.concatenate((y, y_c), axis=0)
+
+        return x, y
+
+    def fit(self, data_tuple_train, data_tuple_test):
+        x_train_all, y_train_all = self.concatenate_train_data(data_tuple_train)
+
+        flag = False
+        n_examples = data_tuple_train[0][0].shape[0]
+        steps = 0
+
+        for i_epoch in range(self.n_epochs):
+            print("Epoch %i/%i..." % (i_epoch + 1, self.n_epochs))
+
+            epoch_data = []
+            for env in range(self.n_env):
+                x_env = data_tuple_train[env][0]
+                y_env = data_tuple_train[env][1]
+                epoch_data.append(shuffle(x_env, y_env))
+
+            count = 0
+            for offset in tqdm(range(0, n_examples, self.batch_size)):
+                end = offset + self.batch_size
+                x_batches = []  # list to store batches for each environment
+                y_batches = []  # list to store batches of labels for each environment
+                self.grads = []  # list to store gradients
+                countp = count % self.n_env  # countp decides the index of the model which trains in the current step
+
+                self.init_optimizer()
+
+                for i_env in range(self.n_env):
+                    x_batches.append(epoch_data[i_env][0][offset:end, :])
+                    y_batches.append(epoch_data[i_env][1][offset:end, :])
+
+                    grad = self.loss(i_env=i_env,
+                                     x=x_batches[i_env],
+                                     y=y_batches[i_env])
+
+                    self.grads.append(grad)
+
+                # Update the environment whose turn it is to learn
+                self.update_optimizer(i_env=countp)
+
+                # Compute training accuracy
+                train_acc = self.evaluate(x=x_train_all, y=y_train_all)
+                self.train_accs.append(train_acc)
+
+                if steps >= self.warm_start and train_acc < self.termination_acc:
+                    # Terminate after warm start and train acc touches threshold we dont want it to fall below
+                    flag = True
+                    print("Early termination.")
+                    break
+
+                count = count + 1
+                steps = steps + 1
+
+            if flag:
+                break
+
+        x_test_all, y_test_all = data_tuple_test[0], data_tuple_test[1]
+        test_acc = self.evaluate(x=x_test_all, y=y_test_all)
+
+        self.test_acc = test_acc
+
+        # print train and test accuracy
+        print("Training accuracy: %.4f" % self.train_accs[-1])
+        print("Testing accuracy: %.4f" % self.test_acc)
+
+
+class TensorflowIrmGame(AbstractIrmGame):
+    @staticmethod
+    def to_array(data):
+        return data
+
+    @staticmethod
+    def to_tensor(data):
+        return data
+
+    @staticmethod
+    def zeros(shape):
+        return tf.zeros(shape, dtype=tf.float32)
+
+    def loss(self, x, y, i_env):
+        with tf.GradientTape() as tape:
+            y_ = self.predict(x=x, shape=(y.shape[0], 2))
+            loss_value = self.keras_criterion(y_true=y, y_pred=y_)
+
+        return tape.gradient(loss_value, self.models[i_env].trainable_variables)
+
+    def init_optimizer(self):
+        pass
+
+    def update_optimizer(self, i_env):
+        self.optimizers[i_env].apply_gradients(zip(self.grads[i_env], self.models[i_env].trainable_variables))
+
+
+class PytorchIrmGame(AbstractIrmGame):
+    @staticmethod
+    def to_array(data):
+        return data.data.numpy()
+
+    @staticmethod
+    def to_tensor(data):
+        return torch.tensor(data, dtype=torch.float32)
+
+    @staticmethod
+    def zeros(shape):
+        return torch.zeros(shape, dtype=torch.float32)
+
+    def loss(self, x, y, i_env):
+        y_ = self.predict(x=x, shape=(y.shape[0], 2), as_array=False)
+        y = torch.tensor(y).squeeze()
+
+        loss = self.torch_criterion(target=y, input=y_)
+        loss.backward()
+
+        return None
+
+    def init_optimizer(self):
+        for i_env in range(self.n_env):
+            self.optimizers[i_env].zero_grad()
+
+    def update_optimizer(self, i_env):
+        self.optimizers[i_env].step()
 
 
 class no_oscillation_irm_game_model:
