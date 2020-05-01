@@ -43,9 +43,9 @@ def keras_model(length, width, height, n_classes):
 
 
 def create_models(module_name, n_env, length, width, height, n_classes):
-    assert module_name in ["keras", "pytorch"]
+    assert module_name in ["tensorflow", "pytorch"]
 
-    if module_name == 'keras':
+    if module_name == "tensorflow":
         return [keras_model(length=length, width=width, height=height, n_classes=n_classes) for _ in range(n_env)]
 
     else:
