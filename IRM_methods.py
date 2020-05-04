@@ -552,7 +552,6 @@ class no_oscillation_irm_game_model:
 
 class variable_irm_game_model:
     def __init__(self, model_list, learning_rate, num_epochs, batch_size, termination_acc, warm_start):
-
         self.model_list = model_list  # list of models for the environments and representation learner
         self.num_epochs = num_epochs  # number of epochs
         self.batch_size = batch_size  # batch size for each gradient update
