@@ -42,11 +42,12 @@ def keras_model(length, width, height, n_classes):
                              keras.layers.Dense(n_classes)])
 
 
-def create_models(module_name, n_env, length, width, height, n_classes):
+def create_models(module_name, variable_phi, n_env, length, width, height, n_classes):
     assert module_name in ["tensorflow", "pytorch"]
+    n = n_env if not variable_phi else n_env + 1
 
     if module_name == "tensorflow":
-        return [keras_model(length=length, width=width, height=height, n_classes=n_classes) for _ in range(n_env)]
+        return [keras_model(length=length, width=width, height=height, n_classes=n_classes) for _ in range(n)]
 
     else:
-        return [TorchModel(length=length, width=width, height=height, n_classes=n_classes) for _ in range(n_env)]
+        return [TorchModel(length=length, width=width, height=height, n_classes=n_classes) for _ in range(n)]
