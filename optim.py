@@ -261,23 +261,26 @@ def create_optimizers(module_name, optimizer_name, extra_grad, n_env, learning_r
 
     else:
         assert params is not None
+        beta_2 = 0.999
+        weight_decay = 0.00125
+        betas = (beta_1, beta_2)
 
         if optimizer_name == "adam":
             assert beta_1 is not None
 
             if not extra_grad:
-                return [TorchAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999), weight_decay=0.00125)
+                return [TorchAdam(params=params[i_env], lr=learning_rate, betas=betas, weight_decay=weight_decay)
                         for i_env in range(n_env)]
 
             else:
-                return [ExtraAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999), weight_decay=0.00125)
+                return [ExtraAdam(params=params[i_env], lr=learning_rate, betas=betas, weight_decay=weight_decay)
                         for i_env in range(n_env)]
 
         else:
             if not extra_grad:
-                return [TorchSGD(params=params[i_env], lr=learning_rate, weight_decay=0.00125)
+                return [TorchSGD(params=params[i_env], lr=learning_rate, weight_decay=weight_decay)
                         for i_env in range(n_env)]
 
             else:
-                return [ExtraSGD(params=params[i_env], lr=learning_rate, weight_decay=0.00125)
+                return [ExtraSGD(params=params[i_env], lr=learning_rate, weight_decay=weight_decay)
                         for i_env in range(n_env)]
