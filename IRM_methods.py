@@ -288,6 +288,7 @@ class AbstractIrmGame:
                 for i_env in range(self.n_env):
                     plt.plot(self.env_train_accs[i_env], label="env %i" % (i_env + 1))
 
+            plt.legend()
             plt.show()
 
             if flag:
