@@ -245,7 +245,7 @@ class ExtraAdam(ExtraGradient):
         return -step_size*exp_avg/denom
 
 
-def create_optimizers(module_name, optimizer_name, extra_grad, n_env, learning_rate, beta_1, params):
+def create_optimizers(module_name, optimizer_name, extra_grad, variable_phi, n_env, learning_rate, beta_1, params):
     assert module_name in ["tensorflow", "pytorch"]
     assert optimizer_name in ["adam", "sgd"]
 
@@ -254,10 +254,14 @@ def create_optimizers(module_name, optimizer_name, extra_grad, n_env, learning_r
 
         if optimizer_name == "adam":
             assert beta_1 is not None
-            return [keras_optim.Adam(learning_rate=learning_rate, beta_1=beta_1) for _ in range(n_env)]
+            models = [keras_optim.Adam(learning_rate=learning_rate, beta_1=beta_1) for _ in range(n_env)]
+            if variable_phi:
+                models.append(keras_optim.Adam(learning_rate=0.1*learning_rate, beta_1=beta_1))
 
         else:
-            return [keras_optim.SGD(learning_rate=learning_rate) for _ in range(n_env)]
+            models = [keras_optim.SGD(learning_rate=learning_rate) for _ in range(n_env)]
+            if variable_phi:
+                models.append(keras_optim.SGD(learning_rate=0.1*learning_rate))
 
     else:
         assert params is not None
@@ -269,18 +273,30 @@ def create_optimizers(module_name, optimizer_name, extra_grad, n_env, learning_r
             assert beta_1 is not None
 
             if not extra_grad:
-                return [TorchAdam(params=params[i_env], lr=learning_rate, betas=betas, weight_decay=weight_decay)
-                        for i_env in range(n_env)]
+                models = [TorchAdam(params=params[i_env], lr=learning_rate, betas=betas, weight_decay=weight_decay)
+                          for i_env in range(n_env)]
+                if variable_phi:
+                    models.append(TorchAdam(params=params[-1], lr=0.1*learning_rate, betas=betas,
+                                            weight_decay=weight_decay))
 
             else:
-                return [ExtraAdam(params=params[i_env], lr=learning_rate, betas=betas, weight_decay=weight_decay)
-                        for i_env in range(n_env)]
+                models = [ExtraAdam(params=params[i_env], lr=learning_rate, betas=betas, weight_decay=weight_decay)
+                          for i_env in range(n_env)]
+                if variable_phi:
+                    models.append(ExtraAdam(params=params[-1], lr=0.1*learning_rate, betas=betas,
+                                            weight_decay=weight_decay))
 
         else:
             if not extra_grad:
-                return [TorchSGD(params=params[i_env], lr=learning_rate, weight_decay=weight_decay)
-                        for i_env in range(n_env)]
+                models = [TorchSGD(params=params[i_env], lr=learning_rate, weight_decay=weight_decay)
+                          for i_env in range(n_env)]
+                if variable_phi:
+                    models.append(TorchSGD(params=params[-1], lr=0.1*learning_rate, weight_decay=weight_decay))
 
             else:
-                return [ExtraSGD(params=params[i_env], lr=learning_rate, weight_decay=weight_decay)
-                        for i_env in range(n_env)]
+                models = [ExtraSGD(params=params[i_env], lr=learning_rate, weight_decay=weight_decay)
+                          for i_env in range(n_env)]
+                if variable_phi:
+                    models.append(ExtraSGD(params=params[-1], lr=0.1*learning_rate, weight_decay=weight_decay))
+
+    return models
