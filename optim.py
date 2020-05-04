@@ -262,7 +262,7 @@ def create_optimizers(module_name, optimizer_name, extra_grad, n_env, learning_r
     else:
         assert params is not None
         beta_2 = 0.999
-        weight_decay = 0  # 0.00125
+        weight_decay = 0.00125
         betas = (beta_1, beta_2)
 
         if optimizer_name == "adam":
