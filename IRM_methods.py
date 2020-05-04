@@ -658,14 +658,15 @@ class variable_irm_game_model:
                 acc_train = np.float(epoch_accuracy(y_in, y_))
                 train_accuracy_results_0.append(acc_train)
 
-                if (
-                        steps >= warm_start and acc_train < termination_acc):  # Terminate after warm start and train
+                if (steps >= warm_start and acc_train < termination_acc):  # Terminate after warm start and train
                     # accuracy touches threshold we dont want it to fall below
                     flag = 'true'
                     break
+
                 count = count + 1
                 steps = steps + 1
                 self.train_accuracy_results = train_accuracy_results_0
+
             if (flag == 'true'):
                 break
 
