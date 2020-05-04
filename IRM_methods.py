@@ -1,6 +1,7 @@
 import tensorflow as tf
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.utils import shuffle
 from tqdm import tqdm_notebook as tqdm
 
@@ -168,6 +169,7 @@ class AbstractIrmGame:
 
         self.grads = []
         self.train_accs = []
+        self.env_train_accs = [[] for _ in range(self.n_env)]
         self.test_acc = None
 
     @staticmethod
@@ -182,6 +184,9 @@ class AbstractIrmGame:
     def zeros(shape):
         raise NotImplementedError
 
+    def predict(self, x, shape, keep_grad_idx, as_array):
+        raise NotImplementedError
+
     def loss(self, x, y, i_env):
         raise NotImplementedError
 
@@ -191,23 +196,21 @@ class AbstractIrmGame:
     def update_optimizer(self, i_env):
         raise NotImplementedError
 
-    def predict(self, x, shape, as_array=True):
-        x = self.to_tensor(x)
-        y_ = self.zeros(shape)
-
-        for i_env in range(self.n_env):
-            y_ = y_ + (1./self.n_env) * self.models[i_env](x)
-
-        if as_array:
-            return self.to_array(y_)
-        else:
-            return y_
-
     def evaluate(self, x, y):
         accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
-        y_ = self.predict(x=x, shape=(y.shape[0], 2))
 
-        return np.float(accuracy(y, y_))
+        y_, env_preds = self.predict(x=x, shape=(y.shape[0], 2), keep_grad_idx=None, as_array=True)
+
+        accuracy.update_state(y_true=y, y_pred=y_)
+        acc = accuracy.result().numpy()
+
+        env_accs = []
+        for i_env in range(self.n_env):
+            accuracy.reset_states()
+            accuracy.update_state(y_true=y, y_pred=env_preds[i_env])
+            env_accs.append(accuracy.result().numpy())
+
+        return acc, env_accs
 
     def concatenate_train_data(self, data_tuple):
         x = data_tuple[0][0]  # Combined data from environments
@@ -222,7 +225,7 @@ class AbstractIrmGame:
 
         return x, y
 
-    def fit(self, data_tuple_train, data_tuple_test):
+    def fit(self, data_tuple_train, data_tuple_test, env_wise=False):
         x_train_all, y_train_all = self.concatenate_train_data(data_tuple_train)
 
         flag = False
@@ -262,8 +265,11 @@ class AbstractIrmGame:
                 self.update_optimizer(i_env=countp)
 
                 # Compute training accuracy
-                train_acc = self.evaluate(x=x_train_all, y=y_train_all)
+                train_acc, env_train_accs = self.evaluate(x=x_train_all, y=y_train_all)
+
                 self.train_accs.append(train_acc)
+                for i_env in range(self.n_env):
+                    self.env_train_accs[i_env].append(env_train_accs[i_env])
 
                 if steps >= self.warm_start and train_acc < self.termination_acc:
                     # Terminate after warm start and train acc touches threshold we dont want it to fall below
@@ -274,11 +280,21 @@ class AbstractIrmGame:
                 count = count + 1
                 steps = steps + 1
 
+            plt.xlabel("Training steps")
+            plt.ylabel("Training accuracy")
+            plt.plot(self.train_accs, label="whole model")
+
+            if env_wise:
+                for i_env in range(self.n_env):
+                    plt.plot(self.env_train_accs[i_env], label="env %i" % (i_env + 1))
+
+            plt.show()
+
             if flag:
                 break
 
         x_test_all, y_test_all = data_tuple_test[0], data_tuple_test[1]
-        test_acc = self.evaluate(x=x_test_all, y=y_test_all)
+        test_acc, _ = self.evaluate(x=x_test_all, y=y_test_all)
 
         self.test_acc = test_acc
 
@@ -300,9 +316,26 @@ class TensorflowIrmGame(AbstractIrmGame):
     def zeros(shape):
         return tf.zeros(shape, dtype=tf.float32)
 
+    def predict(self, x, shape, keep_grad_idx, as_array):
+        x = self.to_tensor(x)
+        y = self.zeros(shape)
+        env_preds = []
+
+        for i_env in range(self.n_env):
+            env_pred = self.models[i_env](x)
+            y = y + (1./self.n_env) * env_pred
+            env_preds.append(env_pred)
+
+        if as_array:
+            y = self.to_array(y)
+            for i_env in range(self.n_env):
+                env_preds[i_env] = self.to_array(env_preds[i_env])
+
+        return y, env_preds
+
     def loss(self, x, y, i_env):
         with tf.GradientTape() as tape:
-            y_ = self.predict(x=x, shape=(y.shape[0], 2))
+            y_, _ = self.predict(x=x, shape=(y.shape[0], 2), keep_grad_idx=None, as_array=True)
             loss_value = self.keras_criterion(y_true=y, y_pred=y_)
 
         return tape.gradient(loss_value, self.models[i_env].trainable_variables)
@@ -327,11 +360,42 @@ class PytorchIrmGame(AbstractIrmGame):
     def zeros(shape):
         return torch.zeros(shape, dtype=torch.float32)
 
+    def predict(self, x, shape, keep_grad_idx, as_array):
+        x = self.to_tensor(x)
+        y = self.zeros(shape)
+        env_preds = []
+
+        if not as_array:
+            for i_env in range(self.n_env):
+                if i_env == keep_grad_idx:
+                    env_pred = self.models[i_env](x)
+                else:
+                    with torch.no_grad():
+                        env_pred = self.models[i_env](x)
+
+                y = y + (1. / self.n_env) * env_pred
+                env_preds.append(env_pred.detach())
+
+        else:
+            with torch.no_grad():
+                for i_env in range(self.n_env):
+                    env_pred = self.models[i_env](x)
+
+                    y = y + (1. / self.n_env) * env_pred
+                    env_preds.append(env_pred)
+
+        if as_array:
+            y = self.to_array(y)
+            for i_env in range(self.n_env):
+                env_preds[i_env] = self.to_array(env_preds[i_env])
+
+        return y, env_preds
+
     def loss(self, x, y, i_env):
-        y_ = self.predict(x=x, shape=(y.shape[0], 2), as_array=False)
+        pred, _ = self.predict(x=x, shape=(y.shape[0], 2), keep_grad_idx=i_env, as_array=False)
         y = torch.tensor(y).squeeze()
 
-        loss = self.torch_criterion(target=y, input=y_)
+        loss = self.torch_criterion(target=y, input=pred)
         loss.backward()
 
         return None
