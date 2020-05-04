@@ -245,34 +245,39 @@ class ExtraAdam(ExtraGradient):
         return -step_size*exp_avg/denom
 
 
-def create_optimizers(module_name, optimizer_name, n_env, learning_rate, beta_1=None, params=None):
+def create_optimizers(module_name, optimizer_name, extra_grad, n_env, learning_rate, beta_1, params):
     assert module_name in ["tensorflow", "pytorch"]
-    assert optimizer_name in ["Adam", "SGD", "ExtraAdam", "ExtraSGD"]
+    assert optimizer_name in ["adam", "sgd"]
 
     if module_name == "tensorflow":
-        if optimizer_name == "Adam":
+        assert not extra_grad
+
+        if optimizer_name == "adam":
             assert beta_1 is not None
             return [keras_optim.Adam(learning_rate=learning_rate, beta_1=beta_1) for _ in range(n_env)]
 
-        elif optimizer_name == "SGD":
-            return [keras_optim.SGD(learning_rate=learning_rate) for _ in range(n_env)]
-
         else:
-            raise NotImplementedError
+            return [keras_optim.SGD(learning_rate=learning_rate) for _ in range(n_env)]
 
     else:
         assert params is not None
 
-        if optimizer_name == "Adam":
+        if optimizer_name == "adam":
             assert beta_1 is not None
-            return [TorchAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999)) for i_env in range(n_env)]
 
-        elif optimizer_name == "SGD":
-            return [TorchSGD(params=params[i_env], lr=learning_rate) for i_env in range(n_env)]
+            if not extra_grad:
+                return [TorchAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999), weight_decay=0.00125)
+                        for i_env in range(n_env)]
 
-        elif optimizer_name == "ExtraAdam":
-            assert beta_1 is not None
-            return [ExtraAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999)) for i_env in range(n_env)]
+            else:
+                return [ExtraAdam(params=params[i_env], lr=learning_rate, betas=(beta_1, 0.999), weight_decay=0.00125)
+                        for i_env in range(n_env)]
 
         else:
-            return [ExtraSGD(params=params[i_env], lr=learning_rate) for i_env in range(n_env)]
+            if not extra_grad:
+                return [TorchSGD(params=params[i_env], lr=learning_rate, weight_decay=0.00125)
+                        for i_env in range(n_env)]
+
+            else:
+                return [ExtraSGD(params=params[i_env], lr=learning_rate, weight_decay=0.00125)
+                        for i_env in range(n_env)]
