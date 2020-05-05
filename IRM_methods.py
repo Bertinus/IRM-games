@@ -28,9 +28,11 @@ class AbstractIrmGame:
         self.torch_criterion = torch.nn.CrossEntropyLoss()
 
         self.grads = []
+        self.grad_norms = [[] for _ in range(self.n_env)]
+        self.losses = [[] for _ in range(self.n_env)]
         self.train_accs = []
+        self.test_accs = []
         self.env_train_accs = [[] for _ in range(self.n_env)]
-        self.test_acc = None
 
     @staticmethod
     def to_array(data):
@@ -50,7 +52,7 @@ class AbstractIrmGame:
     def loss(self, x, y, i_env):
         raise NotImplementedError
 
-    def init_optimizer(self):
+    def zero_grad(self):
         raise NotImplementedError
 
     def update_optimizer(self, i_env):
@@ -87,6 +89,7 @@ class AbstractIrmGame:
 
     def fit(self, data_tuple_train, data_tuple_test, env_wise=False):
         x_train_all, y_train_all = self.concatenate_train_data(data_tuple_train)
+        x_test_all, y_test_all = data_tuple_test[0], data_tuple_test[1]
 
         flag = False
         n_examples = data_tuple_train[0][0].shape[0]
@@ -109,59 +112,118 @@ class AbstractIrmGame:
                 self.grads = []  # list to store gradients
                 countp = count % self.n_env  # countp decides the index of the model which trains in the current step
 
-                self.init_optimizer()
-
+                self.zero_grad()
                 for i_env in range(self.n_env):
                     x_batches.append(epoch_data[i_env][0][offset:end, :])
                     y_batches.append(epoch_data[i_env][1][offset:end, :])
 
-                    grad = self.loss(i_env=i_env,
-                                     x=x_batches[i_env],
-                                     y=y_batches[i_env])
+                    grad, loss_value = self.loss(i_env=i_env,
+                                                 x=x_batches[i_env],
+                                                 y=y_batches[i_env])
 
                     self.grads.append(grad)
+                    self.losses[i_env].append(loss_value)
 
+                ###
+                # Old
                 # Update the environment whose turn it is to learn
-                self.update_optimizer(i_env=countp)
+                # self.update_optimizer(i_env=countp)
+                ##
+                # New
+                for i_env in range(self.n_env):
+                    self.update_optimizer(i_env)
+                ###
 
                 # Compute training accuracy
                 train_acc, env_train_accs = self.evaluate(x=x_train_all, y=y_train_all)
-
                 self.train_accs.append(train_acc)
                 for i_env in range(self.n_env):
                     self.env_train_accs[i_env].append(env_train_accs[i_env])
 
+                # Compute test accuracy
+                test_acc, env_test_accs = self.evaluate(x=x_test_all, y=y_test_all)
+                self.test_accs.append(test_acc)
+
+                # for i_env in range(self.n_env):
+                #     self.grad_norms[i_env].append(
+                #         tf.linalg.global_norm(self.grads[i_env])
+                #     )
+
                 if steps >= self.warm_start and train_acc < self.termination_acc:
                     # Terminate after warm start and train acc touches threshold we dont want it to fall below
-                    flag = True
-                    print("Early termination.")
-                    break
+                    # flag = True
+                    # print("Early termination.")
+                    # break
+                    pass
 
                 count = count + 1
                 steps = steps + 1
 
-            plt.xlabel("Training steps")
-            plt.ylabel("Training accuracy")
-            plt.plot(self.train_accs, label="whole model")
-
-            if env_wise:
-                for i_env in range(self.n_env):
-                    plt.plot(self.env_train_accs[i_env], label="env %i" % (i_env + 1))
-
-            plt.legend()
-            plt.show()
+            self.plot(env_wise)
 
             if flag:
                 break
 
-        x_test_all, y_test_all = data_tuple_test[0], data_tuple_test[1]
-        test_acc, _ = self.evaluate(x=x_test_all, y=y_test_all)
-
-        self.test_acc = test_acc
-
         # print train and test accuracy
         print("Training accuracy: %.4f" % self.train_accs[-1])
-        print("Testing accuracy: %.4f" % self.test_acc)
+        print("Testing accuracy: %.4f" % self.test_accs[-1])
+
+    def plot(self, env_wise):
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        ax1.set_xlabel("Training steps")
+        ax1.set_ylabel("Accuracy")
+        ax1.plot(self.train_accs, label="train acc")
+        ax1.plot(self.test_accs, label="test acc")
+
+        if env_wise:
+            for i_env in range(self.n_env):
+                ax1.plot(self.env_train_accs[i_env], label="train acc - env %i" % (i_env + 1))
+
+        plt.legend()
+        plt.show()
+
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        ax1.set_xlabel("Training steps")
+        ax1.set_ylabel("Loss")
+
+        if env_wise:
+            for i_env in range(self.n_env):
+                ax1.plot(self.losses[i_env], label="loss - env %i" % (i_env + 1))
+
+        plt.legend()
+        plt.show()
+
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        ax1.set_xlabel("Training steps")
+        ax1.set_ylabel("Gradient norms")
+
+        if env_wise:
+            for i_env in range(self.n_env):
+                ax1.plot(self.grad_norms[i_env], label="gradient norm - env %i" % (i_env + 1))
+
+        plt.legend()
+        plt.show()
+
+    def mean_plot(self, env_wise):
+        n = len(self.train_accs)
+        train_accs = [np.mean([self.train_accs[2*i], self.train_accs[2*i+1]]) for i in range(n//2)]
+        test_accs = [np.mean([self.test_accs[2*i], self.test_accs[2*i+1]]) for i in range(n//2)]
+        env_train_accs = [[np.mean([self.env_train_accs[i_env][2*i], self.env_train_accs[i_env][2*i + 1]])
+                           for i in range(n // 2)] for i_env in range(self.n_env)]
+
+        plt.figure(figsize=(10, 6))
+        plt.xlabel("Training steps pairs")
+        plt.ylabel("Mean accuracy")
+
+        plt.plot(train_accs, label="mean train acc")
+        plt.plot(test_accs, label="mean test acc")
+
+        if env_wise:
+            for i_env in range(self.n_env):
+                plt.plot(env_train_accs[i_env], label="train - env %i" % (i_env + 1))
+
+        plt.legend()
+        plt.show()
 
 
 class TensorflowIrmGame(AbstractIrmGame):
@@ -196,12 +258,12 @@ class TensorflowIrmGame(AbstractIrmGame):
 
     def loss(self, x, y, i_env):
         with tf.GradientTape() as tape:
-            y_, _ = self.predict(x=x, shape=(y.shape[0], 2), keep_grad_idx=None, as_array=True)
+            y_, _ = self.predict(x=x, shape=(y.shape[0], 2), keep_grad_idx=None, as_array=False)
             loss_value = self.keras_criterion(y_true=y, y_pred=y_)
 
-        return tape.gradient(loss_value, self.models[i_env].trainable_variables)
+        return tape.gradient(loss_value, self.models[i_env].trainable_variables), loss_value
 
-    def init_optimizer(self):
+    def zero_grad(self):
         pass
 
     def update_optimizer(self, i_env):
@@ -259,9 +321,9 @@ class PytorchIrmGame(AbstractIrmGame):
         loss = self.torch_criterion(target=y, input=pred)
         loss.backward()
 
-        return None
+        return None, loss.item()
 
-    def init_optimizer(self):
+    def zero_grad(self):
         for i_env in range(self.n_env):
             self.optimizers[i_env].zero_grad()
 
