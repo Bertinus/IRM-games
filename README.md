@@ -1,5 +1,5 @@
-# On Best-Response Dynamics in Invariant Risk Minimization GamesProject Report
-Paul Bertin, Clément Jumel
+# On Best-Response Dynamics in Invariant Risk Minimization Games
+## Paul Bertin, Clément Jumel
 
 Forked from the IRM-games repository:
 
